@@ -7,7 +7,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const safe = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pad = n => String(n).padStart(2, "0");
 const page = $("#pageContent"), modal = $("#modalBackdrop"), modalContent = $("#modalContent");
-
+emailRedirectTo: "https://gaelmatheus.github.io/V-rtice/"
 /* ---------- armazenamento local (provisório, até o Supabase) ---------- */
 const store = {
   get(k, d) { try { const v = localStorage.getItem("vertice08:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
