@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#142c2a">
+<meta name="description" content="Vértice — preparação completa para a FUVEST.">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./assets/vertice-mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<title>Vértice — Preparação FUVEST</title>
+<link rel="stylesheet" href="./styles.css">
+<script src="./data.js" defer></script>
+<script src="./script.js" defer></script>
+</head>
+<body>
+<div id="splash" class="splash" role="status" aria-label="Carregando o Vértice">
+  <div class="splash-inner">
+    <svg class="splash-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M5 31 18.7 6h2.6L35 31H5Z"/><path d="M12.5 25h15M16.2 18h7.6"/><circle cx="20" cy="31" r="2"/></svg>
+    <div class="splash-word">vértice</div>
+    <div class="splash-sub">PREPARAÇÃO FUVEST</div>
+    <div class="splash-bar"><span></span></div>
+    <div class="splash-msg" id="splashMsg">Preparando seu espaço…</div>
+  </div>
+</div>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="#" data-nav="inicio">
+      <span class="brand-symbol"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 31 18.7 6h2.6L35 31H5Z" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M12.5 25h15M16.2 18h7.6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="20" cy="31" r="2" fill="currentColor"/></svg></span>
+      <span class="brand-name">vértice<span>PREPARAÇÃO FUVEST</span></span>
+    </a>
+    <nav class="primary-nav" aria-label="Navegação principal">
+      <button class="nav-link active" data-nav="inicio"><span class="nav-icon">⌂</span><span>Visão geral</span></button>
+      <button class="nav-link" data-nav="carreiras"><span class="nav-icon">⌘</span><span>Carreiras</span><span class="nav-tag">USP</span></button>
+      <div class="nav-divider"></div>
+      <div class="sidebar-label">PREPARAÇÃO</div>
+      <button class="nav-link" data-nav="primeira"><span class="nav-icon">Ⅰ</span><span>1ª fase</span></button>
+      <button class="nav-link" data-nav="segunda"><span class="nav-icon">Ⅱ</span><span>2ª fase</span></button>
+      <button class="nav-link" data-nav="redacao"><span class="nav-icon">✎</span><span>Oficina de redação</span></button>
+      <div id="areaNav" class="area-nav"></div>
+      <div class="nav-divider"></div>
+      <div class="sidebar-label">ACOMPANHAMENTO</div>
+      <button class="nav-link" data-nav="plano"><span class="nav-icon">▦</span><span>Plano de estudos</span></button>
+    </nav>
+    <div class="sidebar-bottom">
+      <button class="profile-mini" id="profileButton">
+        <span class="avatar empty"></span><span class="profile-copy"><strong id="profileName">Logar</strong><small id="profileSub">Entre ou crie sua conta</small></span><span class="profile-dots">···</span>
+      </button>
+      <div class="sidebar-foot">VÉRTICE</div>
+    </div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <button class="mobile-menu" id="mobileMenu" aria-label="Abrir menu">☰</button>
+      <div class="breadcrumb"><span>Vértice</span><i>/</i><strong id="crumbCurrent">Visão geral</strong></div>
+      <div class="topbar-actions">
+        <div class="exam-pill"><span class="live-dot"></span> CICLO FUVEST 2027</div>
+        <button class="icon-button notification cloud-button" id="cloudButton" aria-label="Nuvem: minhas respostas"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4.75 4.75 0 0 1-.5 9.5H7Z"/></svg><i></i></button>
+        <button class="top-avatar empty" id="topProfile" aria-label="Logar"></button>
+      </div>
+    </header>
+    <div class="page-wrap" id="pageContent" tabindex="-1"></div>
+    <footer class="app-footer"><span>VÉRTICE — uma preparação construída em camadas.</span><span>Conteúdo demonstrativo · FUVEST 2027</span></footer>
+  </main>
+</div>
+
+<div id="coursePicker" class="course-picker" aria-label="Seleção de curso"></div>
+<div class="mobile-overlay" id="mobileOverlay"></div>
+<div class="modal-backdrop" id="modalBackdrop">
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <button class="modal-close" id="modalClose" aria-label="Fechar">×</button>
+    <div id="modalContent"></div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+<script>setTimeout(function(){var s=document.getElementById("splash");if(s&&!window.__verticeReady)s.remove();},9000);if("serviceWorker" in navigator && location.protocol!=="file:"){window.addEventListener("load",()=>navigator.serviceWorker.register("./service-worker.js").catch(()=>{}));}</script>
+</body>
+</html>

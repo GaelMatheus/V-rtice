@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "Vértice — Preparação FUVEST",
+  "short_name": "Vértice",
+  "description": "Preparação integrada para a FUVEST: fases, carreiras e cursos.",
+  "lang": "pt-BR",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f5ef",
+  "theme_color": "#142c2a",
+  "categories": [
+    "education"
+  ]
+}
