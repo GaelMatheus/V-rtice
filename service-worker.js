@@ -1,4 +1,4 @@
-const CACHE="vertice-fuvest-prototype-v12";
+const CACHE="vertice-fuvest-prototype-v14";
 const FILES=["./","./index.html","./styles.css","./script.js","./data.js","./manifest.webmanifest","./assets/vertice-mark.svg","./assets/subjects/portugues.svg","./assets/subjects/matematica.svg","./assets/subjects/fisica.svg","./assets/subjects/quimica.svg","./assets/subjects/biologia.svg","./assets/subjects/geografia.svg","./assets/subjects/historia.svg","./assets/subjects/ingles.svg","./assets/subjects/filosofia.svg","./assets/subjects/sociologia.svg","./assets/subjects/arte.svg","./assets/subjects/educacao-fisica.svg"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

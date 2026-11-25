@@ -17,6 +17,16 @@ let user = store.get("user", null);                              // {name, email
 let stats = store.get("stats", { solved: 0, correct: 0, done: {} });
 let saved = store.get("saved", []);                              // respostas da nuvem
 let plan = store.get("plan", {});                                // {"2026-11-24":["Matemática"]}
+let history = store.get("history", []);
+let review = store.get("review", []);
+let notes = store.get("notes", []);
+let planDone = store.get("planDone", {});
+let studyMinutes = store.get("studyMinutes", {});
+let simAttempts = store.get("simAttempts", []);
+let writingProgress = store.get("writingProgress", {});
+let achievements = store.get("achievements", []);
+let examDrafts = store.get("examDrafts", {});
+let simClock = null;
 
 /* ---------- áreas e cores (GDD: humanas azul, exatas vermelho, biológicas verde, bio/exatas verde-marinho) ---------- */
 const AREAS = {
@@ -37,10 +47,10 @@ let tourPending = false, tourClose = null;
 const toast = msg => { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(window._toast); window._toast = setTimeout(() => t.classList.remove("show"), 2800); };
 
 /* ---------- navegação ---------- */
-const NAV_OF = { inicio: "inicio", carreiras: "carreiras", primeira: "primeira", materia: "primeira", quiz: "primeira", segunda: "segunda", dia1: "segunda", dia2: "segunda", redacao: "redacao", plano: "plano", mapa: "mapa", lorenz: "lorenz", jogo: "jogo", formulas: "formulas", nuvem: "" };
+const NAV_OF = { inicio: "inicio", carreiras: "carreiras", primeira: "primeira", materia: "primeira", quiz: "primeira", segunda: "segunda", dia1: "segunda", dia2: "segunda", redacao: "redacao", extras: "extras", mapa: "extras", lorenz: "extras", jogo: "extras", formulas: "extras", plano: "plano", nuvem: "", preparacao: "preparacao", revisar: "revisar", simulados: "simulados", radar: "radar", conhecimento: "conhecimento", caderno: "caderno", trilhas: "trilhas" };
 function crumb() {
   const s = ctx.subjectId ? subj(ctx.subjectId).name : "";
-  const base = { inicio: "Visão geral", carreiras: "Carreiras", primeira: "1ª fase", segunda: "2ª fase", dia1: "2ª fase / 1º dia", dia2: "2ª fase / 2º dia", redacao: "Oficina de redação", plano: "Plano de estudos", mapa: "Mapa ao vivo", lorenz: "Curva de Lorenz", jogo: "Jogo rápido", formulas: "Caderno de fórmulas", nuvem: "Minhas respostas" };
+  const base = { inicio: "Visão geral", carreiras: "Carreiras", primeira: "1ª fase", segunda: "2ª fase", dia1: "2ª fase / 1º dia", dia2: "2ª fase / 2º dia", redacao: "Oficina de redação", extras: "Extras", plano: "Plano de estudos", mapa: "Mapa ao vivo", lorenz: "Curva de Lorenz", jogo: "Jogo rápido", formulas: "Caderno de fórmulas", nuvem: "Minhas respostas", preparacao: "Minha preparação", revisar: "Revisar questões", simulados: "Simulados", radar: "Radar FUVEST", conhecimento: "Mapa de conhecimento", caderno: "Caderno pessoal", trilhas: "Trilhas de habilidades" };
   if (view === "materia") return "1ª fase / " + s;
   if (view === "quiz" && ctx.quiz) return ctx.quiz.origin === "fase1" ? "1ª fase / Questões" : "1ª fase / " + s + " / " + ctx.quiz.title;
   return base[view] || "Visão geral";
@@ -51,6 +61,7 @@ function setNav() {
   $$(".tab-item").forEach(b => b.classList.toggle("active", b.dataset.nav === NAV_OF[view]));
 }
 function go(v, opts = {}) {
+  if (v !== 'quiz' && simClock) { clearInterval(simClock); simClock=null; }
   view = v; Object.assign(ctx, opts);
   if (v === "segunda" || v === "dia1") { /* mantém modelo só dentro do 1º dia */ }
   setNav(); render(); window.scrollTo({ top: 0 });
@@ -101,7 +112,8 @@ function renderHome() {
       </div>
     </div>
     <div class="overview-mascot-stage">${mascotMarkup("overview-mascot")}</div>
-  </section>`;
+  </section>
+  <section class="panel smart-panel"><div class="panel-head"><div><div class="eyebrow">CENTRAL DE ACOMPANHAMENTO</div><h2>Minha preparação</h2><p class="muted-copy">Entenda seu desempenho e descubra o próximo passo.</p></div><button class="button button-primary" data-nav="preparacao">Abrir painel →</button></div><div class="smart-shortcuts"><button data-nav="revisar"><b>↻</b><span><strong>Revisar questões</strong><small>${review.length} para revisar</small></span></button><button data-nav="simulados"><b>◷</b><span><strong>Simulados</strong><small>${simAttempts.length} tentativas concluídas</small></span></button><button data-nav="conhecimento"><b>▦</b><span><strong>Mapa de conhecimento</strong><small>Acompanhe os conteúdos</small></span></button><button data-nav="caderno"><b>✎</b><span><strong>Caderno pessoal</strong><small>${notes.length} anotações salvas</small></span></button></div></section>`;
 }
 
 /* ---------- CARREIRAS (apenas a escolha de carreira) ---------- */
@@ -143,21 +155,26 @@ function startQuiz(origin, sid, ti) {
   else { const pool = SUBJECTS.slice().sort(() => Math.random() - .5).slice(0, 10); items = pool.flatMap(s => bank(`${s.id}|f1`, 1)); title = "Questões 1ª fase"; eyebrow = "1ª FASE"; }
   items = items.filter(q => !stats.done[q.id]).slice(0, 10);           // acertadas não se repetem
   ctx.subjectId = sid || null;
-  ctx.quiz = { origin, sid, ti, title, eyebrow, items, i: 0, sel: null, answered: false, lastOk: false, results: [] };
+  ctx.quiz = { origin, sid, ti, title, eyebrow, items, i: 0, sel: null, answered: false, lastOk: false, results: [], startedAt: Date.now() };
   go("quiz");
 }
 function renderQuiz() {
   const q = ctx.quiz; if (!q) return renderPrimeira();
-  const back = q.origin === "fase1" ? `<button class="button button-quiet" data-nav="primeira">← 1ª fase</button>` : `<button class="button button-quiet" data-subject="${q.sid}">← ${subj(q.sid).name}</button>`;
+  if (simClock) { clearInterval(simClock); simClock = null; }
+  const back = q.origin === "simulado" ? `<button class="button button-quiet" data-nav="simulados">← Simulados</button>` : q.origin === "fase1" ? `<button class="button button-quiet" data-nav="primeira">← 1ª fase</button>` : `<button class="button button-quiet" data-subject="${q.sid}">← ${subj(q.sid).name}</button>`;
   const head = heading(q.eyebrow, q.title, "", back);
   if (!q.items.length) return `${head}<section class="panel soon-box"><div class="soon-icon">✓</div><h2>Nada pendente por aqui</h2><p>As questões que você acertou não se repetem. Quando novas questões forem adicionadas, elas aparecem neste conteúdo.</p></section>`;
   if (q.i >= q.items.length) {
+    if (simClock) { clearInterval(simClock); simClock=null; }
     const ok = q.results.filter(Boolean).length;
+    if (q.origin === 'simulado' && !q.savedAttempt) { q.savedAttempt=true; const total=q.items.length,minutes=Math.max(1,Math.round((Date.now()-q.startedAt)/60000));simAttempts.unshift({id:Date.now(),label:q.title,date:new Date().toISOString(),correct:ok,total,pct:total?Math.round(ok/total*100):0,minutes});simAttempts=simAttempts.slice(0,50);store.set('simAttempts',simAttempts);checkAchievements(); }
     return `${head}<section class="panel quiz-result"><div class="eyebrow">RESULTADO</div><div class="quiz-score">${ok}<span> / ${q.items.length}</span></div><p>${ok === q.items.length ? "Você acertou todas." : "As questões erradas continuam disponíveis para você tentar de novo."}</p><div class="modal-actions">${back}<button class="button button-primary" data-nav="inicio">Ver desempenho →</button></div></section>`;
   }
   const it = q.items[q.i], L = "ABCDE";
+  const timerMarkup = q.origin === 'simulado' && q.timed ? `<span class="sim-live-timer" id="simLiveTimer">00:00</span>` : '';
+  if (q.origin === 'simulado' && q.timed) simClock = setInterval(() => { const el=$('#simLiveTimer'); if(el){const sec=Math.floor((Date.now()-q.startedAt)/1000);el.textContent=`${pad(Math.floor(sec/60))}:${pad(sec%60)}`;} },1000);
   return `${head}<section class="panel quiz-card"><div class="quiz-progress"><span style="width:${q.i / q.items.length * 100}%"></span></div>
-  <div class="quiz-top"><span class="eyebrow">QUESTÃO ${q.i + 1} DE ${q.items.length}</span><span class="quiz-tags">${it.model ? `<em>modelo de interface</em>` : ""}<em>${safe(it.source || "FUVEST")}</em></span></div>
+  <div class="quiz-top"><span class="eyebrow">QUESTÃO ${q.i + 1} DE ${q.items.length}</span><span class="quiz-tags">${timerMarkup}${it.model ? `<em>modelo de interface</em>` : ""}<em>${safe(it.source || "FUVEST")}</em></span></div>
   <p class="quiz-text">${safe(it.text)}</p>
   <div class="quiz-options">${it.options.map((o, i) => {
     let c = "quiz-opt"; if (q.answered) { if (i === it.answer) c += " correct"; else if (i === q.sel) c += " wrong"; } else if (i === q.sel) c += " selected";
@@ -171,7 +188,12 @@ function answerQuiz() {
   const it = q.items[q.i], ok = q.sel === it.answer;
   q.answered = true; q.lastOk = ok; q.results.push(ok);
   stats.solved++; if (ok) { stats.correct++; stats.done[it.id] = true; }
-  store.set("stats", stats); render();
+  const subjectId = q.sid || (it.id || "").split("|")[0];
+  history.unshift({ id: `${Date.now()}-${it.id}`, questionId: it.id, subjectId, subject: subj(subjectId)?.name || "Geral", title: q.title, text: it.text, options: it.options, answer: it.answer, selected: q.sel, correct: ok, date: new Date().toISOString(), source: it.source || "FUVEST", model: !!it.model });
+  history = history.slice(0, 500); store.set("history", history);
+  if (!ok && !review.some(x => x.questionId === it.id)) { review.unshift({ questionId: it.id, subjectId, subject: subj(subjectId)?.name || "Geral", title: q.title, text: it.text, options: it.options, answer: it.answer, selected: q.sel, addedAt: new Date().toISOString() }); store.set("review", review); }
+  if (q.origin === 'review' && ok) { review=review.filter(r=>r.questionId!==it.id);store.set('review',review); }
+  store.set("stats", stats); checkAchievements(); render();
 }
 
 /* ---------- 2ª FASE ---------- */
@@ -185,7 +207,7 @@ function renderSegunda() {
   </div>`;
 }
 function examQ(label, n, id) {
-  return `<article class="exam-q"><div class="exam-q-head"><span class="q-no">${n}</span><div><small>${safe(label.toUpperCase())}</small><strong>Questão ${n}</strong></div></div><p class="q-stem">O enunciado da questão ${n} (FUVEST, 2ª fase) aparecerá aqui.</p><textarea class="answer-input" data-qid="${id}" data-qlabel="${safe(label)} · Questão ${n}" rows="4" placeholder="Escreva sua resposta de acordo com o que a questão pede..."></textarea></article>`;
+  return `<article class="exam-q"><div class="exam-q-head"><span class="q-no">${n}</span><div><small>${safe(label.toUpperCase())}</small><strong>Questão ${n}</strong></div></div><p class="q-stem">O enunciado da questão ${n} (FUVEST, 2ª fase) aparecerá aqui.</p><textarea class="answer-input" data-qid="${id}" data-qlabel="${safe(label)} · Questão ${n}" rows="4" placeholder="Escreva sua resposta de acordo com o que a questão pede...">${safe(examDrafts[id] || '')}</textarea></article>`;
 }
 function renderDia1() {
   const back = `<button class="button button-quiet" data-nav="segunda">← 2ª fase</button>`;
@@ -208,7 +230,7 @@ function saveExam(day) {
   if (!items.length) { toast("Escreva ao menos uma resposta antes de salvar."); return; }
   if (!user) { toast("Entre ou crie sua conta para guardar na nuvem."); openAuth("entrar"); return; }
   saved.unshift({ id: Date.now(), kind: day === "1" ? "2ª fase · 1º dia" : "2ª fase · 2º dia", title: day === "1" ? "Português e Redação" : "Disciplinas específicas", career: activeCareer.name, model: day === "1" ? ctx.model : null, date: new Date().toISOString(), items });
-  store.set("saved", saved); paintCloud(); toast("Respostas guardadas na nuvem ☁");
+  store.set("saved", saved); items.forEach(i=>{const key=$$('.answer-input').find(t=>t.dataset.qlabel===i.label)?.dataset.qid;if(key)delete examDrafts[key];});store.set('examDrafts',examDrafts);paintCloud(); toast("Respostas guardadas na nuvem ☁");
 }
 
 /* ---------- NUVEM (respostas salvas) ---------- */
@@ -227,7 +249,8 @@ function renderRedacao() {
   <section class="panel quick-repertory-card"><div class="quick-repertory-head"><div><div class="eyebrow">EXERCÍCIO DE REPERTÓRIO</div><h2>Jogo rápido</h2><p>Leia um tema e pratique encontrar um repertório que ajude a discutir o assunto. Por enquanto, o tema ficará em aberto.</p></div><span class="quick-repertory-icon" aria-hidden="true">✎</span></div>
   <div class="quick-theme-placeholder"><span class="eyebrow">TEMA DO EXERCÍCIO</span><strong>Em breve</strong><small>Um tema será apresentado aqui.</small></div>
   <label class="quick-repertory-label" for="quickRepertory">Seu repertório</label><textarea class="answer-input quick-repertory-input" id="quickRepertory" rows="4" placeholder="Pense em um livro, filme, conceito, acontecimento histórico, autor ou dado que poderia ser usado em uma redação..."></textarea>
-  <div class="quick-repertory-footer"><small>Escreva apenas o repertório e, se quiser, uma frase explicando sua relação com o tema.</small><button class="button button-primary" data-save-quick>Guardar exercício</button></div></section>`;
+  <div class="quick-repertory-footer"><small>Escreva apenas o repertório e, se quiser, uma frase explicando sua relação com o tema.</small><button class="button button-primary" data-save-quick>Guardar exercício</button></div></section>
+  <section class="panel writing-path-panel"><div class="eyebrow">TREINAMENTO EM ETAPAS</div><h2>Trilhas de escrita</h2><p class="muted-copy">Pratique uma habilidade por vez e acompanhe o que já treinou.</p><div class="writing-path-grid">${[['tese','Construção de tese','Formule um posicionamento claro para um tema.'],['argumentacao','Argumentação','Desenvolva uma justificativa e explique sua consequência.'],['conectivos','Conectivos','Relacione ideias com progressão e clareza.'],['introducao','Introdução','Organize repertório, contexto, problema e tese.']].map(([id,n,d])=>`<article class="writing-path-card"><div><strong>${n}</strong><small>${d}</small></div><span class="path-status ${writingProgress[id]?'done':''}">${writingProgress[id]?'Praticado':'Pendente'}</span><button class="button button-quiet button-small" data-writing="${id}">Praticar →</button></article>`).join('')}</div></section>`;
 }
 
 /* ---------- PLANO DE ESTUDOS ---------- */
@@ -244,36 +267,49 @@ function renderPlan() {
   <div class="grid plan-layout"><section class="panel"><div class="panel-head"><div><h2>Sua semana</h2></div><div class="plan-head-right"><span class="eyebrow">${MONTHS[m].toUpperCase()} DE ${y}</span><button class="button button-quiet button-small" data-plan-edit>${ctx.planEdit ? "Concluir" : "Editar plano"}</button></div></div>
   ${ctx.planEdit ? `<div class="plan-banner">Modo edição: clique em um dia para escolher o que estudar.</div>` : ""}
   <div class="calendar-grid">${["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"].map(d => `<div class="week-day">${d}</div>`).join("")}${cells}</div></section>
-  <aside class="panel"><div class="panel-head"><div><h2>Minha rotina</h2></div></div>${has ? `<div class="routine-list">${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="routine-row"><span>${safe(k)}</span><b>${v} ${v === 1 ? "dia" : "dias"}</b></div>`).join("")}</div>` : `<div class="empty-state">Seu plano ainda está vazio.</div>`}<button class="button button-primary" style="margin-top:14px" data-plan-edit>${has ? "Editar plano" : "Criar meu plano"}</button></aside></div>`;
+  <aside class="panel"><div class="panel-head"><div><h2>Minha rotina</h2></div></div>${has ? `<div class="routine-list">${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="routine-row"><span>${safe(k)}</span><b>${v} ${v === 1 ? "dia" : "dias"}</b></div>`).join("")}</div>` : `<div class="empty-state">Seu plano ainda está vazio.</div>`}<button class="button button-primary" style="margin-top:14px" data-plan-edit>${has ? "Editar plano" : "Criar meu plano"}</button><div class="plan-goal"><label for="weeklyGoal">Meta semanal de horas</label><div class="goal-control"><input id="weeklyGoal" type="number" min="1" max="80" value="${store.get('weeklyGoal',15)}"><button class="button button-quiet button-small" data-save-goal>Salvar</button></div><small>Tempo registrado nesta semana: ${weeklyMinutes()} min</small></div></aside></div>
+  <section class="panel today-plan"><div class="panel-head"><div><div class="eyebrow">EXECUÇÃO</div><h2>Plano de hoje</h2></div><span class="eyebrow">${todayK}</span></div>${(plan[todayK]||[]).length ? `<div class="today-task-list">${plan[todayK].map(x=>`<label class="today-task"><input type="checkbox" data-task-done="${safe(x)}" ${planDone[todayK+'|'+x]?'checked':''}><span>${safe(x)}</span></label>`).join('')}</div>` : '<p class="muted-copy">Adicione disciplinas ao dia de hoje usando “Editar plano”.</p>'}<div class="study-time-entry"><label for="studyMinutesInput">Tempo estudado hoje (minutos)</label><input id="studyMinutesInput" type="number" min="0" max="1440" value="${studyMinutes[todayK]||0}"><button class="button button-quiet button-small" data-save-minutes>Registrar tempo</button></div></section>`;
 }
 function openPlanDay(k) {
   const [y, mo, d] = k.split("-").map(Number), sel = plan[k] || [], opts = SUBJECTS.map(s => s.name).concat("Redação");
   openModal(`<div class="eyebrow">PLANO DE ESTUDOS</div><h2>${d} de ${MONTHS[mo - 1]}</h2><p>O que você quer estudar neste dia?</p><div class="chip-picker">${opts.map(o => `<button type="button" class="pick-chip ${sel.includes(o) ? "on" : ""}" data-plan-chip="${safe(o)}">${safe(o)}</button>`).join("")}</div><div class="modal-actions"><button class="button button-quiet" data-plan-clear="${k}">Limpar dia</button><button class="button button-primary" data-plan-save="${k}">Salvar</button></div>`);
 }
 
-/* ---------- extras definidos pelas disciplinas específicas da 2ª fase ---------- */
-function getCareerExtras(career = activeCareer) {
-  const subjects = new Set((career.subjects || []).map(s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()));
-  const hasHumanities = ["historia", "geografia", "filosofia", "sociologia"].some(s => subjects.has(s));
-  const hasExact = ["matematica", "fisica"].some(s => subjects.has(s));
-  return { hasHumanities, hasExact };
-}
-function renderAreaNav() {
-  const { hasHumanities, hasExact } = getCareerExtras();
-  const box = $("#areaNav"), items = [];
-  if (hasHumanities) items.push({ group: "MAPAS E GRÁFICOS", links: [["mapa", "◎", "Mapa ao vivo"], ["lorenz", "∿", "Curva de Lorenz"]] });
-  if (hasExact) items.push({ group: "FÓRMULAS", links: [["jogo", "▶\uFE0E", "Jogo rápido"], ["formulas", "ƒ", "Caderno de fórmulas"]] });
-  box.innerHTML = items.map(section => `<div class="nav-divider"></div><div class="sidebar-label">${section.group}</div>${section.links.map(i => `<button class="nav-link" data-nav="${i[0]}"><span class="nav-icon">${i[1]}</span><span>${i[2]}</span></button>`).join("")}`).join("");
-  setNav();
+/* ---------- EXTRAS: ferramentas disponíveis para todas as carreiras ---------- */
+function renderExtras() {
+  const cards = [
+    ["mapa", "◎", "Mapa ao vivo", "Notícias e acontecimentos atuais, organizados para estudo.", "MAPAS E ATUALIDADES"],
+    ["lorenz", "∿", "Curva de Lorenz", "Explore a representação gráfica da distribuição de renda.", "MAPAS E GRÁFICOS"],
+    ["jogo", "▶", "Jogo rápido", "Pratique fórmulas e conceitos em desafios curtos.", "DESAFIOS"],
+    ["formulas", "ƒ", "Caderno de fórmulas", "Consulte fórmulas importantes de Matemática e Física.", "CONSULTA" ]
+  ];
+  return `${heading("FERRAMENTAS COMPLEMENTARES", "Extras")}<p class="muted-copy page-intro extras-intro">Ferramentas de apoio que podem ser usadas por qualquer estudante, independentemente da carreira escolhida.</p><div class="extras-grid">${cards.map(([id,icon,title,desc,tag])=>`<button class="extra-card" data-nav="${id}" aria-label="Abrir ${title}"><span class="extra-card-icon">${icon}</span><span class="extra-card-tag">${tag}</span><strong>${title}</strong><small>${desc}</small><span class="extra-card-open">Abrir <b>↗</b></span></button>`).join("")}</div>`;
 }
 function renderSoon() {
-  const t = { mapa: ["MAPAS E GRÁFICOS", "Mapa ao vivo", "Notícias reais, atualizadas todos os dias às 6h."], lorenz: ["MAPAS E GRÁFICOS", "Curva de Lorenz", "O gráfico da curva de Lorenz ficará aqui."], jogo: ["FÓRMULAS", "Jogo rápido", "Perguntas de “como se escreve a fórmula…” com correção após a resposta."], formulas: ["FÓRMULAS", "Caderno de fórmulas", "As fórmulas de Matemática e Física mais usadas nos vestibulares."] }[view];
+  const t = { mapa: ["MAPAS E GRÁFICOS", "Mapa ao vivo", "Notícias reais, atualizadas todos os dias às 6h."], lorenz: ["MAPAS E GRÁFICOS", "Curva de Lorenz", "O gráfico da curva de Lorenz ficará aqui."], jogo: ["DESAFIOS", "Jogo rápido", "Perguntas de “como se escreve a fórmula…” com correção após a resposta."], formulas: ["CONSULTA", "Caderno de fórmulas", "As fórmulas de Matemática e Física mais usadas nos vestibulares."] }[view];
   return emptyPage(t[0], t[1], t[2]);
 }
 
+/* ---------- NOVO PAINEL DE PREPARAÇÃO ---------- */
+function subjectPerformance(){
+ const map={}; history.forEach(h=>{const k=h.subject||'Geral';map[k]??={total:0,correct:0};map[k].total++;if(h.correct)map[k].correct++;});
+ return Object.entries(map).sort((a,b)=>a[0].localeCompare(b[0]));
+}
+function weeklyMinutes(){const now=new Date(),day=(now.getDay()+6)%7,start=new Date(now);start.setDate(now.getDate()-day);start.setHours(0,0,0,0);return Object.entries(studyMinutes).reduce((n,[k,v])=>{const d=new Date(k+'T12:00:00');return d>=start&&d<=now?n+Number(v||0):n;},0);}
+function checkAchievements(){const defs=[['primeiro','Primeiro passo','Resolver a primeira questão',stats.solved>=1],['cinquenta','Persistência','Resolver 50 questões',stats.solved>=50],['matematica','Matemático','Acertar 20 questões de Matemática',history.filter(h=>h.subject==='Matemática'&&h.correct).length>=20],['semana','Consistência','Estudar em 7 dias diferentes',Object.values(studyMinutes).filter(v=>v>0).length>=7],['revisao','Aprender com erros','Revisar 10 questões',store.get('reviewedCount',0)>=10],['simulado','Em ritmo de prova','Concluir um simulado',simAttempts.length>=1]];defs.forEach(([id,title,desc,ok])=>{if(ok&&!achievements.includes(id)){achievements.push(id);toast('Conquista desbloqueada: '+title);}});store.set('achievements',achievements);}
+function renderPreparation(){const perf=subjectPerformance(),pct=stats.solved?Math.round(stats.correct/stats.solved*100):0,goal=Number(store.get('weeklyGoal',15))*60,mins=weeklyMinutes(),target=Number(store.get('targetPct',75)),weak=perf.filter(x=>x[1].total>=2).sort((a,b)=>(a[1].correct/a[1].total)-(b[1].correct/b[1].total))[0],nextStep=review.length?`Comece revisando ${review.length} questão(ões) que você errou.`:weak?`Priorize ${weak[0]}: seu aproveitamento atual nessa disciplina é ${Math.round(weak[1].correct/weak[1].total*100)}%.`:'Responda questões de diferentes disciplinas para montar seu diagnóstico.';return `${heading('PAINEL DE ACOMPANHAMENTO','Minha preparação')}<div class="grid prep-kpis">${stat('Questões respondidas',stats.solved,'em todas as sessões','✓')}${stat('Aproveitamento',pct+'%',`${stats.correct} acertos`,'%')}${stat('Para revisar',review.length,'questões erradas guardadas','↻')}${stat('Tempo nesta semana',Math.floor(mins/60)+'h '+(mins%60)+'min',`meta: ${Math.floor(goal/60)}h`,'◷')}</div><section class="panel next-step-panel"><div><div class="eyebrow">PRÓXIMO PASSO SUGERIDO</div><h2>O que fazer agora?</h2><p>${nextStep}</p></div><button class="button button-primary" data-nav="${review.length?'revisar':'primeira'}">${review.length?'Revisar agora':'Continuar estudando'} →</button></section><section class="panel target-performance"><div><div class="eyebrow">META PESSOAL</div><h2>Meta de aproveitamento</h2><p>Defina uma referência própria para acompanhar seu progresso. Não é uma nota de corte oficial nem uma previsão de aprovação.</p></div><div class="target-performance-control"><strong>${pct}%</strong><span>atual</span><input id="targetPct" type="number" min="1" max="100" value="${target}" aria-label="Meta de aproveitamento em porcentagem"><span>meta %</span><button class="button button-quiet button-small" data-save-target>Salvar</button></div><div class="target-progress"><i style="width:${Math.min(100,pct/Math.max(1,target)*100)}%"></i></div></section><section class="panel"><div class="panel-head"><div><div class="eyebrow">ANÁLISE DE DESEMPENHO</div><h2>Desempenho por disciplina</h2></div><span class="eyebrow">BASEADO NAS SUAS RESPOSTAS</span></div>${perf.length?`<div class="subject-performance-list">${perf.map(([name,v])=>{const p=Math.round(v.correct/v.total*100);return `<div class="subject-performance-row"><div><strong>${safe(name)}</strong><small>${v.correct}/${v.total} acertos · ${p}%</small></div><div class="mini-track"><i style="width:${p}%"></i></div></div>`}).join('')}</div>`:'<div class="empty-state">Responda algumas questões para formar seu diagnóstico por disciplina.</div>'}</section><div class="grid prep-two"><section class="panel"><div class="panel-head"><div><div class="eyebrow">REVISÃO</div><h2>Seus pontos de atenção</h2></div><button class="text-link" data-nav="revisar">Ver tudo →</button></div>${review.slice(0,4).map(r=>`<div class="attention-row"><span>${safe(r.subject)}</span><strong>${safe(r.title)}</strong></div>`).join('')||'<p class="muted-copy">Nenhuma questão pendente de revisão.</p>'}</section><section class="panel"><div class="panel-head"><div><div class="eyebrow">EVOLUÇÃO</div><h2>Últimas tentativas</h2></div></div>${renderAttemptBars()}</section></div><section class="panel"><div class="panel-head"><div><div class="eyebrow">CONQUISTAS</div><h2>Marcos da sua preparação</h2></div><span class="eyebrow">${achievements.length} DESBLOQUEADAS</span></div><div class="achievement-grid">${[['primeiro','Primeiro passo','Primeira questão'],['cinquenta','Persistência','50 questões'],['matematica','Matemático','20 acertos em Matemática'],['semana','Consistência','7 dias de estudo'],['revisao','Aprender com erros','10 revisões'],['simulado','Em ritmo de prova','Primeiro simulado']].map(([id,n,d])=>`<div class="achievement ${achievements.includes(id)?'unlocked':''}"><b>${achievements.includes(id)?'✓':'◇'}</b><span><strong>${n}</strong><small>${d}</small></span></div>`).join('')}</div></section>`;}
+function renderAttemptBars(){if(!simAttempts.length)return '<p class="muted-copy">Conclua simulados para comparar seus resultados.</p>';return `<div class="attempt-bars">${simAttempts.slice(0,6).reverse().map(a=>`<div><span>${safe(a.label)}</span><b>${a.pct}%</b><i><em style="width:${a.pct}%"></em></i></div>`).join('')}</div>`;}
+function renderReview(){return `${heading('APRENDIZAGEM ATIVA','Revisar questões')}<p class="muted-copy page-intro">Questões que você errou ficam reunidas aqui para uma nova tentativa. Remova da lista quando sentir que consolidou o conteúdo.</p>${review.length?`<div class="review-list">${review.map((r,i)=>`<article class="panel review-card"><div class="review-meta"><span>${safe(r.subject)}</span><small>${new Date(r.addedAt).toLocaleDateString('pt-BR')}</small></div><h3>${safe(r.title)}</h3><p>${safe(r.text)}</p><div class="review-options">${(r.options||[]).map((o,j)=>`<div class="${j===r.answer?'is-answer':''}"><b>${'ABCDE'[j]}</b>${safe(o)}</div>`).join('')}</div><div class="review-foot"><span>Resposta correta: ${'ABCDE'[r.answer]||'—'}</span><div class="review-actions"><button class="button button-primary button-small" data-review-retry="${i}">Tentar novamente</button><button class="button button-quiet button-small" data-review-done="${i}">Marcar como revisada</button></div></div></article>`).join('')}</div>`:'<section class="panel empty-state-panel"><h2>Você está em dia!</h2><p>Quando errar uma questão, ela aparecerá aqui automaticamente.</p><button class="button button-primary" data-nav="primeira">Continuar estudando</button></section>'}`;}
+function renderSimulados(){const subs=SUBJECTS.map(s=>`<option value="${s.id}">${safe(s.name)}</option>`).join('');return `${heading('TREINO EM CONDIÇÕES DE PROVA','Simulados')}<section class="panel sim-setup"><div class="eyebrow">MONTE SUA SESSÃO</div><h2>Como você quer treinar?</h2><p class="muted-copy">Escolha uma disciplina ou faça uma sessão geral. O cronômetro registra o tempo da tentativa.</p><div class="sim-controls"><label>Formato<select id="simSubject"><option value="all">Primeira fase · geral</option>${subs}</select></label><label>Quantidade<select id="simCount"><option>10</option><option>30</option><option>90</option></select></label><label class="sim-timer-choice"><input type="checkbox" id="simTimer" checked> Cronometrar</label></div><button class="button button-primary" data-start-sim>Iniciar simulado →</button></section><section class="panel"><div class="panel-head"><div><div class="eyebrow">SEU HISTÓRICO</div><h2>Tentativas anteriores</h2></div></div>${simAttempts.length?`<div class="sim-history">${simAttempts.map(a=>`<div><span><strong>${safe(a.label)}</strong><small>${new Date(a.date).toLocaleString('pt-BR')}</small></span><b>${a.correct}/${a.total} · ${a.pct}%</b><small>${a.minutes} min</small></div>`).join('')}</div>`:'<p class="muted-copy">Seus simulados concluídos aparecerão aqui.</p>'}</section>`;}
+function renderRadar(){const total=SUBJECTS.reduce((n,s)=>n+s.modules.reduce((m,g)=>m+g[2].length,0),0);return `${heading('LEITURA ESTRATÉGICA','Radar FUVEST')}<section class="panel radar-intro"><div class="eyebrow">VISÃO DO PROGRAMA</div><h2>Organize o estudo por conteúdo</h2><p>O radar reúne os conteúdos cadastrados no Vértice e permite acompanhar o que já foi trabalhado. Frequências históricas só serão exibidas quando houver uma base de provas classificada e conferida — não usamos estimativas como se fossem estatísticas oficiais.</p><div class="radar-total"><strong>${total}</strong><span>tópicos mapeados no programa atual</span></div></section><div class="grid radar-subjects">${SUBJECTS.map(s=>{const topics=s.modules.reduce((n,g)=>n+g[2].length,0),seen=history.filter(h=>h.subject===s.name).length;return `<button class="radar-subject" data-subject="${s.id}">${subjectMark(s)}<span><strong>${safe(s.name)}</strong><small>${topics} tópicos · ${seen} respostas registradas</small></span><b>→</b></button>`}).join('')}</div>`;}
+function renderKnowledge(){return `${heading('VISÃO DO SEU PROGRESSO','Mapa de conhecimento')}<p class="muted-copy page-intro">Cada módulo muda de estado conforme suas respostas registradas: ainda não explorado, em desenvolvimento ou com bom desempenho.</p>${SUBJECTS.map(s=>`<section class="panel knowledge-subject"><div class="panel-head">${subjectMark(s)}<h2>${safe(s.name)}</h2></div><div class="knowledge-grid">${s.modules.map(m=>{const hs=history.filter(h=>h.subject===s.name&&h.title===m[0]),p=hs.length?Math.round(hs.filter(h=>h.correct).length/hs.length*100):0,state=!hs.length?'untouched':p>=75?'strong':'working';return `<div class="knowledge-topic ${state}"><span>${state==='strong'?'●':state==='working'?'◐':'○'}</span><strong>${safe(m[0])}</strong><small>${hs.length?`${p}% · ${hs.length} respostas`:'Ainda não explorado'}</small></div>`}).join('')}</div></section>`).join('')}`;}
+function renderNotebook(){return `${heading('SEU ESPAÇO DE ESTUDO','Caderno pessoal')}<section class="panel note-editor"><div class="eyebrow">NOVA ANOTAÇÃO</div><div class="note-fields"><label>Título<input id="noteTitle" maxlength="90" placeholder="Ex.: Segunda lei de Newton"></label><label>Disciplina<select id="noteSubject"><option>Geral</option>${SUBJECTS.map(s=>`<option>${safe(s.name)}</option>`).join('')}</select></label></div><textarea id="noteBody" class="answer-input" rows="5" placeholder="Registre fórmulas, conceitos, datas, repertórios ou observações..."></textarea><button class="button button-primary" data-add-note>Salvar anotação</button></section><div class="notes-list">${notes.length?notes.map(n=>`<article class="panel note-card"><div><span class="eyebrow">${safe(n.subject)}</span><h3>${safe(n.title)}</h3><p>${safe(n.body).replace(/\n/g,'<br>')}</p><small>${new Date(n.date).toLocaleDateString('pt-BR')}</small></div><button class="button button-quiet button-small" data-delete-note="${n.id}">Excluir</button></article>`).join(''):'<div class="empty-state">Seu caderno ainda está vazio.</div>'}</div>`;}
+function renderSkillTracks(){const tracks=[['tese','Construção de tese','Escreva uma tese que responda diretamente ao recorte do tema.'],['argumentacao','Argumentação','Apresente uma razão, explique-a e mostre sua consequência.'],['conectivos','Conectivos','Reescreva duas frases conectando-as sem repetir ideias.'],['introducao','Introdução','Organize repertório, contextualização, problema e duas teses.'],['leitura','Leitura de enunciado','Identifique comando, dados e restrições de uma questão.'],['resolucao','Estratégia de resolução','Registre o caminho escolhido antes de calcular.']];return `${heading('TREINAMENTO ORIENTADO','Trilhas de habilidades')}<p class="muted-copy page-intro">Pequenos exercícios para praticar uma habilidade específica. Salve cada prática para acompanhar seu percurso.</p><div class="skill-track-grid">${tracks.map(([id,n,d])=>`<article class="panel skill-track"><div class="eyebrow">${writingProgress[id]?'CONCLUÍDA':'ETAPA DE TREINO'}</div><h3>${n}</h3><p>${d}</p><button class="button ${writingProgress[id]?'button-quiet':'button-primary'} button-small" data-writing="${id}">${writingProgress[id]?'Praticar novamente':'Começar →'}</button></article>`).join('')}</div>`;}
+function openWritingExercise(id){const names={tese:'Construção de tese',argumentacao:'Argumentação',conectivos:'Conectivos',introducao:'Introdução',leitura:'Leitura de enunciado',resolucao:'Estratégia de resolução'};openModal(`<div class="eyebrow">TRILHA DE HABILIDADES</div><h2>${names[id]||'Exercício'}</h2><p>Faça sua prática no campo abaixo. O Vértice registra a conclusão, mas não atribui nota automática.</p><textarea id="writingExerciseText" class="answer-input" rows="7" placeholder="Registre sua tentativa..."></textarea><div class="modal-actions"><button class="button button-primary" data-finish-writing="${id}">Salvar prática</button></div>`);}
+
 /* ---------- render ---------- */
 function render() {
-  const map = { inicio: renderHome, carreiras: renderCareers, primeira: renderPrimeira, materia: renderMateria, quiz: renderQuiz, segunda: renderSegunda, dia1: renderDia1, dia2: renderDia2, redacao: renderRedacao, plano: renderPlan, nuvem: renderNuvem, mapa: renderSoon, lorenz: renderSoon, jogo: renderSoon, formulas: renderSoon };
+  const map = { inicio: renderHome, carreiras: renderCareers, primeira: renderPrimeira, materia: renderMateria, quiz: renderQuiz, segunda: renderSegunda, dia1: renderDia1, dia2: renderDia2, redacao: renderRedacao, extras: renderExtras, plano: renderPlan, nuvem: renderNuvem, mapa: renderSoon, lorenz: renderSoon, jogo: renderSoon, formulas: renderSoon, preparacao: renderPreparation, revisar: renderReview, simulados: renderSimulados, radar: renderRadar, conhecimento: renderKnowledge, caderno: renderNotebook, trilhas: renderSkillTracks };
   page.innerHTML = (map[view] || renderHome)();
 }
 
@@ -339,7 +375,7 @@ function applyTheme(career) {
 }
 function selectCareer(id, fromPicker) {
   const found = D.careers.find(c => c.id === id); if (!found) return;
-  activeCareer = found; applyTheme(found); renderAreaNav();
+  activeCareer = found; applyTheme(found);
   if (fromPicker) {
     const picker = $("#coursePicker"); picker.classList.add("closing");
     setTimeout(() => { picker.remove(); go("inicio"); if (tourPending) { tourPending = false; startTour(); } }, 240);
@@ -387,12 +423,9 @@ function showMascotIntro(picker) {
 
 /* ---------- Vértice ensinando a mexer no site ---------- */
 function tourSteps() {
-  const { hasHumanities, hasExact } = getCareerExtras();
   const s = [{ t: "Pronto! Este é o seu espaço no Vértice. Vou te mostrar rapidinho como tudo funciona." },
-    { sel: ".primary-nav", side: true, t: "Na barra lateral você navega entre a Visão geral, as Carreiras, a 1ª e a 2ª fase, a Oficina de redação e o Plano de estudos." }];
-  if (hasHumanities && hasExact) s.push({ sel: "#areaNav", side: true, t: "Pelas disciplinas da segunda fase da sua carreira, você tem os quatro extras: Mapa ao vivo, Curva de Lorenz, Jogo rápido e Caderno de fórmulas." });
-  else if (hasHumanities) s.push({ sel: "#areaNav", side: true, t: "Pelas disciplinas da segunda fase da sua carreira, você tem os extras de Humanas: Mapa ao vivo e Curva de Lorenz." });
-  else if (hasExact) s.push({ sel: "#areaNav", side: true, t: "Pelas disciplinas da segunda fase da sua carreira, você tem os extras de Exatas: Jogo rápido e Caderno de fórmulas." });
+    { sel: ".primary-nav", side: true, t: "Na barra lateral você navega entre a Visão geral, as Carreiras, a 1ª e a 2ª fase, a Oficina de redação, os Extras e o Plano de estudos." },
+    { sel: '.nav-link[data-nav="extras"]', side: true, t: "Em Extras ficam reunidas ferramentas complementares, disponíveis para qualquer carreira. É só abrir a aba e escolher uma delas." }];
   s.push({ sel: ".stats-3", t: "Na Visão geral aparece o seu desempenho: questões resolvidas, porcentagem de acertos e a nota de corte do ano passado." });
   s.push({ sel: "#cloudButton", t: "Na nuvem ficam guardadas as respostas da 2ª fase que você salvar, para você consultar quando quiser." });
   s.push({ sel: "#profileButton", side: true, t: user ? "Aqui fica o seu perfil." : "Aqui você faz login ou cria sua conta. Seu nome e sua inicial aparecem no lugar de “Logar”." });
@@ -432,7 +465,7 @@ function info(title, text) { openModal(`<div class="eyebrow">VÉRTICE · PROTÓT
 
 /* ---------- eventos (delegados) ---------- */
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-nav],[data-subject],[data-topic],[data-start-var],[data-start-f1],[data-opt],[data-answer],[data-next],[data-career],[data-career-filter],[data-day],[data-model],[data-model-change],[data-save],[data-save-oficina],[data-save-quick],[data-del-saved],[data-plan-edit],[data-plan-day],[data-plan-chip],[data-plan-save],[data-plan-clear],[data-action],[data-auth-tab],[data-auth-submit],[data-auth-close]");
+  const t = e.target.closest("[data-nav],[data-subject],[data-topic],[data-start-var],[data-start-f1],[data-opt],[data-answer],[data-next],[data-career],[data-career-filter],[data-day],[data-model],[data-model-change],[data-save],[data-save-oficina],[data-save-quick],[data-del-saved],[data-plan-edit],[data-plan-day],[data-plan-chip],[data-plan-save],[data-plan-clear],[data-save-goal],[data-save-target],[data-task-done],[data-save-minutes],[data-start-sim],[data-review-done],[data-review-retry],[data-add-note],[data-delete-note],[data-writing],[data-finish-writing],[data-action],[data-auth-tab],[data-auth-submit],[data-auth-close]");
   if (!t) return; const d = t.dataset;
   if (d.nav) return go(d.nav);
   if (d.subject) return go("materia", { subjectId: d.subject });
@@ -468,6 +501,17 @@ document.addEventListener("click", e => {
   if (d.planChip) return t.classList.toggle("on");
   if (d.planSave) { plan[d.planSave] = $$(".pick-chip.on").map(c => c.dataset.planChip); if (!plan[d.planSave].length) delete plan[d.planSave]; store.set("plan", plan); closeModal(); return render(); }
   if (d.planClear) { delete plan[d.planClear]; store.set("plan", plan); closeModal(); return render(); }
+  if (d.saveGoal != null) { const v=Math.max(1,Math.min(80,Number($('#weeklyGoal').value)||15));store.set('weeklyGoal',v);toast('Meta semanal atualizada.');return render(); }
+  if (d.saveTarget != null) { const v=Math.max(1,Math.min(100,Number($('#targetPct').value)||75));store.set('targetPct',v);toast('Meta de aproveitamento atualizada.');return render(); }
+  if (d.taskDone != null) { const key=d.taskDone;const k=d.taskDone;const day=d.taskDate||dkey(new Date());const full=day+'|'+key;planDone[full]=!planDone[full];store.set('planDone',planDone);return; }
+  if (d.saveMinutes != null) { const v=Math.max(0,Math.min(1440,Number($('#studyMinutesInput').value)||0));studyMinutes[dkey(new Date())]=v;store.set('studyMinutes',studyMinutes);checkAchievements();toast('Tempo de estudo registrado.');return render(); }
+  if (d.reviewRetry != null) { const r=review[Number(d.reviewRetry)];if(!r)return;ctx.quiz={origin:'review',sid:r.subjectId,ti:null,title:r.title,eyebrow:'REVISÃO · '+String(r.subject).toUpperCase(),items:[{id:r.questionId,text:r.text,options:r.options,answer:r.answer,source:'Sua lista de revisão'}],i:0,sel:null,answered:false,lastOk:false,results:[],startedAt:Date.now()};return go('quiz'); }
+  if (d.reviewDone != null) { review.splice(Number(d.reviewDone),1);store.set('review',review);store.set('reviewedCount',store.get('reviewedCount',0)+1);checkAchievements();toast('Questão marcada como revisada.');return render(); }
+  if (d.startSim != null) { const sid=$('#simSubject').value,count=Number($('#simCount').value)||10;let items=sid==='all'?SUBJECTS.flatMap(s=>bank(`${s.id}|f1`,8)):bank(`${sid}|f1`,count);items=items.slice(0,count);ctx.quiz={origin:'simulado',sid:sid==='all'?null:sid,ti:null,title:'Simulado',eyebrow:'SIMULADO FUVEST',items,i:0,sel:null,answered:false,lastOk:false,results:[],startedAt:Date.now(),timed:$('#simTimer').checked};return go('quiz'); }
+  if (d.addNote != null) { const title=$('#noteTitle').value.trim(),body=$('#noteBody').value.trim();if(!title||!body)return toast('Preencha o título e o conteúdo.');notes.unshift({id:Date.now(),title,body,subject:$('#noteSubject').value,date:new Date().toISOString()});store.set('notes',notes);toast('Anotação salva no caderno.');return render(); }
+  if (d.deleteNote != null) {notes=notes.filter(n=>String(n.id)!==d.deleteNote);store.set('notes',notes);return render();}
+  if (d.writing) return openWritingExercise(d.writing);
+  if (d.finishWriting != null) {const val=$('#writingExerciseText').value.trim();if(!val)return toast('Escreva sua prática antes de salvar.');writingProgress[d.finishWriting]=true;store.set('writingProgress',writingProgress);const arr=store.get('writingEntries',[]);arr.unshift({id:Date.now(),type:d.finishWriting,text:val,date:new Date().toISOString()});store.set('writingEntries',arr);closeModal();toast('Prática salva.');return render();}
   if (d.authTab) return openAuth(d.authTab);
   if ("authSubmit" in d) return submitAuth();
   if ("authClose" in d) return closeAuth();
@@ -483,6 +527,7 @@ function action(a) {
   info("Em construção", "Esta funcionalidade será conectada depois.");
 }
 document.addEventListener("input", e => {
+  if (e.target.dataset.qid) { examDrafts[e.target.dataset.qid]=e.target.value; store.set('examDrafts',examDrafts); }
   if (e.target.id === "careerSearch") { ctx.careerSearch = e.target.value; const pos = e.target.selectionStart; render(); const n = $("#careerSearch"); n.focus(); n.setSelectionRange(pos, pos); }
   if (e.target.id === "oficina") { const w = e.target.value.trim().split(/\s+/).filter(Boolean).length; $("#wordCount").textContent = `${w} ${w === 1 ? "PALAVRA" : "PALAVRAS"}`; }
 });
@@ -508,6 +553,6 @@ function runSplash(done) {
   new MutationObserver(() => { const on = sb.classList.contains("open"); document.body.classList.toggle("lock", on); mm.setAttribute("aria-expanded", on); }).observe(sb, { attributes: true, attributeFilter: ["class"] });
   $("#sidebarClose").onclick = () => { sb.classList.remove("open"); $("#mobileOverlay").classList.remove("show"); };
   document.addEventListener("keydown", e => { if (e.key === "Escape" && sb.classList.contains("open") && !tourClose) $("#sidebarClose").click(); }); }
-applyTheme(activeCareer); paintProfile(); paintCloud(); renderAreaNav(); render();
+applyTheme(activeCareer); paintProfile(); paintCloud(); render();
 runSplash(() => showCoursePicker(true));
 })();
