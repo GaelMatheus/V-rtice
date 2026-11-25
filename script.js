@@ -48,6 +48,7 @@ function crumb() {
 function setNav() {
   $$(".nav-link").forEach(b => b.classList.toggle("active", b.dataset.nav === NAV_OF[view]));
   $("#crumbCurrent").textContent = crumb();
+  $$(".tab-item").forEach(b => b.classList.toggle("active", b.dataset.nav === NAV_OF[view]));
 }
 function go(v, opts = {}) {
   view = v; Object.assign(ctx, opts);
@@ -250,11 +251,19 @@ function openPlanDay(k) {
   openModal(`<div class="eyebrow">PLANO DE ESTUDOS</div><h2>${d} de ${MONTHS[mo - 1]}</h2><p>O que você quer estudar neste dia?</p><div class="chip-picker">${opts.map(o => `<button type="button" class="pick-chip ${sel.includes(o) ? "on" : ""}" data-plan-chip="${safe(o)}">${safe(o)}</button>`).join("")}</div><div class="modal-actions"><button class="button button-quiet" data-plan-clear="${k}">Limpar dia</button><button class="button button-primary" data-plan-save="${k}">Salvar</button></div>`);
 }
 
-/* ---------- itens da barra lateral por área (sem conteúdo por enquanto) ---------- */
+/* ---------- extras definidos pelas disciplinas específicas da 2ª fase ---------- */
+function getCareerExtras(career = activeCareer) {
+  const subjects = new Set((career.subjects || []).map(s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()));
+  const hasHumanities = ["historia", "geografia", "filosofia", "sociologia"].some(s => subjects.has(s));
+  const hasExact = ["matematica", "fisica"].some(s => subjects.has(s));
+  return { hasHumanities, hasExact };
+}
 function renderAreaNav() {
-  const key = areaKey(activeCareer.area), box = $("#areaNav");
-  const cfg = { humanas: ["MAPAS E GRÁFICOS", [["mapa", "◎", "Mapa ao vivo"], ["lorenz", "∿", "Curva de Lorenz"]]], exatas: ["FÓRMULAS", [["jogo", "▶", "Jogo rápido"], ["formulas", "ƒ", "Caderno de fórmulas"]]] }[key];
-  box.innerHTML = cfg ? `<div class="nav-divider"></div><div class="sidebar-label">${cfg[0]}</div>${cfg[1].map(i => `<button class="nav-link" data-nav="${i[0]}"><span class="nav-icon">${i[1]}</span><span>${i[2]}</span></button>`).join("")}` : "";
+  const { hasHumanities, hasExact } = getCareerExtras();
+  const box = $("#areaNav"), items = [];
+  if (hasHumanities) items.push({ group: "MAPAS E GRÁFICOS", links: [["mapa", "◎", "Mapa ao vivo"], ["lorenz", "∿", "Curva de Lorenz"]] });
+  if (hasExact) items.push({ group: "FÓRMULAS", links: [["jogo", "▶\uFE0E", "Jogo rápido"], ["formulas", "ƒ", "Caderno de fórmulas"]] });
+  box.innerHTML = items.map(section => `<div class="nav-divider"></div><div class="sidebar-label">${section.group}</div>${section.links.map(i => `<button class="nav-link" data-nav="${i[0]}"><span class="nav-icon">${i[1]}</span><span>${i[2]}</span></button>`).join("")}`).join("");
   setNav();
 }
 function renderSoon() {
@@ -378,11 +387,12 @@ function showMascotIntro(picker) {
 
 /* ---------- Vértice ensinando a mexer no site ---------- */
 function tourSteps() {
-  const key = areaKey(activeCareer.area);
+  const { hasHumanities, hasExact } = getCareerExtras();
   const s = [{ t: "Pronto! Este é o seu espaço no Vértice. Vou te mostrar rapidinho como tudo funciona." },
     { sel: ".primary-nav", side: true, t: "Na barra lateral você navega entre a Visão geral, as Carreiras, a 1ª e a 2ª fase, a Oficina de redação e o Plano de estudos." }];
-  if (key === "humanas") s.push({ sel: "#areaNav", side: true, t: "Como você escolheu uma carreira de Humanas, aqui ficam seus mapas e gráficos: o Mapa ao vivo e a Curva de Lorenz." });
-  if (key === "exatas") s.push({ sel: "#areaNav", side: true, t: "Como você escolheu uma carreira de Exatas, aqui ficam suas fórmulas: o Jogo rápido e o Caderno de fórmulas." });
+  if (hasHumanities && hasExact) s.push({ sel: "#areaNav", side: true, t: "Pelas disciplinas da segunda fase da sua carreira, você tem os quatro extras: Mapa ao vivo, Curva de Lorenz, Jogo rápido e Caderno de fórmulas." });
+  else if (hasHumanities) s.push({ sel: "#areaNav", side: true, t: "Pelas disciplinas da segunda fase da sua carreira, você tem os extras de Humanas: Mapa ao vivo e Curva de Lorenz." });
+  else if (hasExact) s.push({ sel: "#areaNav", side: true, t: "Pelas disciplinas da segunda fase da sua carreira, você tem os extras de Exatas: Jogo rápido e Caderno de fórmulas." });
   s.push({ sel: ".stats-3", t: "Na Visão geral aparece o seu desempenho: questões resolvidas, porcentagem de acertos e a nota de corte do ano passado." });
   s.push({ sel: "#cloudButton", t: "Na nuvem ficam guardadas as respostas da 2ª fase que você salvar, para você consultar quando quiser." });
   s.push({ sel: "#profileButton", side: true, t: user ? "Aqui fica o seu perfil." : "Aqui você faz login ou cria sua conta. Seu nome e sua inicial aparecem no lugar de “Logar”." });
@@ -407,6 +417,7 @@ function startTour() {
     const st = steps[i]; if (mobile()) $("#sidebar").classList.toggle("open", !!st.side);
     text.textContent = st.t; count.textContent = `${i + 1} / ${steps.length}`; next.textContent = i === steps.length - 1 ? "Começar" : "Próximo →";
     const el = st.sel ? $(st.sel) : null; if (el && !st.side) el.scrollIntoView({ block: "center", behavior: "instant" });
+    if (mobile() && st.side && el) setTimeout(() => { $("#sidebar").scrollTop = Math.max(0, el.offsetTop - 90); }, 120);
     setTimeout(place, mobile() && st.side ? 340 : 80);
   }
   function close() { window.removeEventListener("resize", place); root.remove(); $("#sidebar").classList.remove("open"); tourClose = null; }
@@ -493,6 +504,10 @@ function runSplash(done) {
   setTimeout(() => { clearInterval(iv); sp.classList.add("leaving"); setTimeout(() => { sp.remove(); done(); }, 520); }, 2700);
 }
 
+{ const sb = $("#sidebar"), mm = $("#mobileMenu");
+  new MutationObserver(() => { const on = sb.classList.contains("open"); document.body.classList.toggle("lock", on); mm.setAttribute("aria-expanded", on); }).observe(sb, { attributes: true, attributeFilter: ["class"] });
+  $("#sidebarClose").onclick = () => { sb.classList.remove("open"); $("#mobileOverlay").classList.remove("show"); };
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && sb.classList.contains("open") && !tourClose) $("#sidebarClose").click(); }); }
 applyTheme(activeCareer); paintProfile(); paintCloud(); renderAreaNav(); render();
 runSplash(() => showCoursePicker(true));
 })();
