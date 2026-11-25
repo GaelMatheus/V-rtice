@@ -583,3 +583,6 @@ body.lock{overflow:hidden}
 @media(max-width:350px){.extras-grid{gap:5px}.extra-card{padding:8px 6px;min-height:142px}.extra-card strong{font-size:9px}.extra-card small{font-size:7.5px}}
 /* Cartão de desempenho mais enxuto em telas pequenas, sem sacrificar a leitura do gráfico. */
 @media(max-width:560px){.performance-chart-card{padding:15px 10px;border-radius:14px;gap:12px}.performance-chart-layout{gap:12px}.performance-donut{width:clamp(126px,38vw,154px)}.performance-legend{min-width:94px}.performance-chart-copy h2{font-size:18px}}
+
+.auth-forgot{display:block;margin:8px 0 2px auto;padding:4px 0;border:0;background:transparent;color:var(--theme-accent);font-size:12px;font-weight:700;cursor:pointer}
+.auth-submit:disabled{opacity:.65;cursor:wait;transform:none}

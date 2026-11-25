@@ -13,7 +13,10 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem("vertice08:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem("vertice08:" + k, JSON.stringify(v)); } catch (e) {} }
 };
-let user = store.get("user", null);                              // {name, email}
+let user = null; // preenchido pela sessão autenticada do Supabase
+const SUPABASE_URL = "https://mcyqimtjutqkeoevejdl.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_zspPujbD6GXc5Nze0IgNvw_Z_sl5EJ9";
+const supabaseClient = window.supabase?.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let stats = store.get("stats", { solved: 0, correct: 0, done: {} });
 let saved = store.get("saved", []);                              // respostas da nuvem
 let plan = store.get("plan", {});                                // {"2026-11-24":["Matemática"]}
@@ -39,7 +42,7 @@ const areaKey = a => a === "Ciências Biológicas" ? "biologicas" : a === "Ciên
 const SUBJECTS = D.subjects.filter(s => s.id !== "literatura");
 const subj = id => D.subjects.find(s => s.id === id) || SUBJECTS[0];
 
-let activeCareer = D.careers.find(c => c.id.startsWith("516-geografia")) || D.careers[0];
+let activeCareer = D.careers.find(c => c.id === store.get("careerId", "")) || D.careers.find(c => c.id.startsWith("516-geografia")) || D.careers[0];
 let view = "inicio";
 const ctx = { subjectId: null, model: null, careerFilter: "Todas", careerSearch: "", planEdit: false, quiz: null };
 let tourPending = false, tourClose = null;
@@ -327,8 +330,21 @@ function profileModal() {
   openModal(`<div class="eyebrow">PERFIL</div><h2>${safe(user.name)}</h2><p>${safe(user.email)}</p><div class="detail-box"><strong>Sua carreira</strong><p>${safe(activeCareer.name)} · ${safe(activeCareer.unit)}</p></div><div class="modal-actions"><button class="button button-quiet" data-action="tour">Rever tutorial</button><button class="button button-quiet" data-action="logout">Sair</button></div>`);
 }
 
-/* ---------- login / cadastro (visual; e-mail real virá com Supabase) ---------- */
+/* ---------- autenticação Supabase ---------- */
 let authTab = "entrar";
+function authMessage(message) {
+  const target = $("#authError");
+  if (target) target.textContent = message || "";
+}
+function friendlyAuthError(error) {
+  const message = String(error?.message || "");
+  if (/invalid login credentials/i.test(message)) return "E-mail ou senha incorretos.";
+  if (/user already registered/i.test(message)) return "Este e-mail já possui uma conta. Tente entrar.";
+  if (/password should be at least/i.test(message)) return "A senha não atende ao tamanho mínimo configurado no Supabase.";
+  if (/email not confirmed/i.test(message)) return "Confirme seu e-mail antes de entrar.";
+  if (/failed to fetch|network/i.test(message)) return "Não foi possível conectar ao Supabase. Confira sua internet e tente novamente.";
+  return message || "Não foi possível concluir. Tente novamente.";
+}
 function openAuth(tab) {
   authTab = tab || "entrar"; closeModal();
   let el = $("#authScreen"); if (!el) { el = document.createElement("div"); el.id = "authScreen"; el.className = "auth-screen"; document.body.appendChild(el); }
@@ -341,29 +357,77 @@ function openAuth(tab) {
   <div class="auth-tabs"><button class="${login ? "on" : ""}" data-auth-tab="entrar">Entrar</button><button class="${login ? "" : "on"}" data-auth-tab="criar">Criar conta</button></div>
   ${login ? "" : `<label class="auth-field"><span>Como podemos te chamar?</span><input id="authName" autocomplete="nickname" placeholder="Seu nome"></label>`}
   <label class="auth-field"><span>Seu e-mail</span><input id="authEmail" type="email" autocomplete="email" placeholder="voce@email.com"></label>
-  <label class="auth-field"><span>${login ? "Senha" : "Crie uma senha"}</span><input id="authPass" type="password" autocomplete="${login ? "current-password" : "new-password"}" placeholder="${login ? "Digite sua senha" : "Pelo menos 6 caracteres"}"></label>
-  ${login ? "" : `<label class="auth-field"><span>Senha novamente</span><input id="authPass2" type="password" autocomplete="new-password" placeholder="Repita sua senha"></label>`}
+  <label class="auth-field"><span>${login ? "Senha" : "Crie uma senha"}</span><input id="authPass" type="password" autocomplete="${login ? "current-password" : "new-password"}" placeholder="${login ? "Digite sua senha" : "Pelo menos 8 caracteres"}"></label>
+  ${login ? `<button type="button" class="auth-forgot" data-auth-forgot>Esqueci minha senha</button>` : `<label class="auth-field"><span>Senha novamente</span><input id="authPass2" type="password" autocomplete="new-password" placeholder="Repita sua senha"></label>`}
   <div class="auth-error" id="authError" role="alert"></div>
   <button class="auth-submit" data-auth-submit>${login ? "Entrar na minha conta" : "Criar minha conta"} <span>→</span></button>
-  <div class="auth-note"><span>✦</span><p>Seu progresso merece um lugar seguro.<br><b>Em breve, sincronizado na sua conta.</b></p></div>
+  <div class="auth-note"><span>✦</span><p>Seu acesso é protegido por sua conta.<br><b>O progresso será sincronizado com a nuvem nas próximas etapas.</b></p></div>
   <small class="auth-legal">Ao continuar, você concorda em usar o Vértice de forma responsável.</small></div>`;
   setTimeout(() => $(login ? "#authEmail" : "#authName")?.focus(), 30);
 }
 function closeAuth() { $("#authScreen")?.remove(); }
-function submitAuth() {
-  const err = m => { $("#authError").textContent = m; };
-  const email = ($("#authEmail").value || "").trim(), pass = $("#authPass").value || "";
+async function submitAuth() {
+  const button = $("[data-auth-submit]");
+  const err = m => authMessage(m);
+  if (!supabaseClient) return err("A conexão com o Supabase não foi carregada. Atualize a página e tente novamente.");
+  const email = ($("#authEmail")?.value || "").trim(), pass = $("#authPass")?.value || "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return err("Digite um e-mail válido.");
+  if (pass.length < 8) return err("A senha precisa ter pelo menos 8 caracteres.");
   if (authTab === "criar") {
-    const name = ($("#authName").value || "").trim();
+    const name = ($("#authName")?.value || "").trim();
     if (!name) return err("Diga como podemos te chamar.");
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return err("Digite um e-mail válido.");
-    if (pass.length < 6) return err("A senha precisa ter pelo menos 6 caracteres.");
-    if (pass !== $("#authPass2").value) return err("As senhas não coincidem.");
-    user = { name, email }; store.set("user", user); closeAuth(); paintProfile(); if (view === "nuvem") render(); toast(`Olá, ${name}!`);
+    if (pass !== $("#authPass2")?.value) return err("As senhas não coincidem.");
+    button.disabled = true; button.textContent = "Criando sua conta…";
+    const { data, error } = await supabaseClient.auth.signUp({ email, password: pass, options: { data: { name } } });
+    button.disabled = false;
+    if (error) { button.innerHTML = 'Criar minha conta <span>→</span>'; return err(friendlyAuthError(error)); }
+    if (data.session) {
+      await applyAuthenticatedUser(data.user, data.session);
+      closeAuth(); toast(`Olá, ${name}! Sua conta está conectada.`);
+    } else {
+      err("Conta criada! Verifique seu e-mail para confirmar o cadastro e depois entre no Vértice.");
+      button.innerHTML = 'Criar minha conta <span>→</span>';
+    }
   } else {
-    if (!email || !pass) return err("Preencha e-mail e senha.");
-    err("O login por e-mail será conectado ao Supabase. Por enquanto, use “Criar conta” para testar a interface.");
+    if (!pass) return err("Preencha sua senha.");
+    button.disabled = true; button.textContent = "Entrando…";
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pass });
+    button.disabled = false; button.innerHTML = 'Entrar na minha conta <span>→</span>';
+    if (error) return err(friendlyAuthError(error));
+    await applyAuthenticatedUser(data.user, data.session);
+    closeAuth(); toast(`Bem-vindo de volta, ${user.name || "estudante"}!`);
   }
+}
+async function applyAuthenticatedUser(authUser, session) {
+  if (!authUser) return;
+  let profile = null;
+  const { data } = await supabaseClient.from("profiles").select("id,name,email,career_id,career_name").eq("id", authUser.id).maybeSingle();
+  profile = data;
+  user = { id: authUser.id, name: profile?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "Estudante", email: authUser.email || "" };
+  if (profile?.career_id) {
+    const career = D.careers.find(c => c.id === profile.career_id);
+    if (career) { activeCareer = career; store.set("careerId", career.id); applyTheme(career); }
+  } else if (activeCareer?.id) {
+    // Migra para o perfil a carreira que já estava selecionada neste dispositivo.
+    const { error } = await supabaseClient.from("profiles").update({ career_id: activeCareer.id, career_name: activeCareer.name }).eq("id", authUser.id);
+    if (error) console.warn("Não foi possível salvar a carreira inicial no perfil:", error);
+  }
+  paintProfile(); paintCloud(); render();
+}
+async function initializeAuth() {
+  if (!supabaseClient) { console.error("Supabase SDK indisponível."); return; }
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session?.user) await applyAuthenticatedUser(session.user, session);
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (session?.user) setTimeout(() => applyAuthenticatedUser(session.user, session), 0);
+    else if (event === "SIGNED_OUT") { user = null; paintProfile(); render(); }
+  });
+}
+async function resetPassword() {
+  const email = ($("#authEmail")?.value || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return authMessage("Digite seu e-mail no campo acima para receber o link de recuperação.");
+  const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: "https://gaelmatheus.github.io/V-rtice/" });
+  authMessage(error ? friendlyAuthError(error) : "Se esse e-mail estiver cadastrado, você receberá as instruções de recuperação.");
 }
 
 /* ---------- tema ---------- */
@@ -375,7 +439,8 @@ function applyTheme(career) {
 }
 function selectCareer(id, fromPicker) {
   const found = D.careers.find(c => c.id === id); if (!found) return;
-  activeCareer = found; applyTheme(found);
+  activeCareer = found; applyTheme(found); store.set("careerId", found.id);
+  if (user?.id && supabaseClient) { supabaseClient.from("profiles").update({ career_id: found.id, career_name: found.name }).eq("id", user.id).then(({ error }) => { if (error) console.error("Falha ao salvar curso no perfil:", error); }); }
   if (fromPicker) {
     const picker = $("#coursePicker"); picker.classList.add("closing");
     setTimeout(() => { picker.remove(); go("inicio"); if (tourPending) { tourPending = false; startTour(); } }, 240);
@@ -464,8 +529,8 @@ function closeModal() { modal.classList.remove("open"); }
 function info(title, text) { openModal(`<div class="eyebrow">VÉRTICE · PROTÓTIPO</div><h2>${title}</h2><p>${text}</p><div class="modal-actions"><button class="button button-primary" id="modalOk">Entendi</button></div>`); }
 
 /* ---------- eventos (delegados) ---------- */
-document.addEventListener("click", e => {
-  const t = e.target.closest("[data-nav],[data-subject],[data-topic],[data-start-var],[data-start-f1],[data-opt],[data-answer],[data-next],[data-career],[data-career-filter],[data-day],[data-model],[data-model-change],[data-save],[data-save-oficina],[data-save-quick],[data-del-saved],[data-plan-edit],[data-plan-day],[data-plan-chip],[data-plan-save],[data-plan-clear],[data-save-goal],[data-save-target],[data-task-done],[data-save-minutes],[data-start-sim],[data-review-done],[data-review-retry],[data-add-note],[data-delete-note],[data-writing],[data-finish-writing],[data-action],[data-auth-tab],[data-auth-submit],[data-auth-close]");
+document.addEventListener("click", async e => {
+  const t = e.target.closest("[data-nav],[data-subject],[data-topic],[data-start-var],[data-start-f1],[data-opt],[data-answer],[data-next],[data-career],[data-career-filter],[data-day],[data-model],[data-model-change],[data-save],[data-save-oficina],[data-save-quick],[data-del-saved],[data-plan-edit],[data-plan-day],[data-plan-chip],[data-plan-save],[data-plan-clear],[data-save-goal],[data-save-target],[data-task-done],[data-save-minutes],[data-start-sim],[data-review-done],[data-review-retry],[data-add-note],[data-delete-note],[data-writing],[data-finish-writing],[data-action],[data-auth-tab],[data-auth-submit],[data-auth-forgot],[data-auth-close]");
   if (!t) return; const d = t.dataset;
   if (d.nav) return go(d.nav);
   if (d.subject) return go("materia", { subjectId: d.subject });
@@ -514,13 +579,14 @@ document.addEventListener("click", e => {
   if (d.finishWriting != null) {const val=$('#writingExerciseText').value.trim();if(!val)return toast('Escreva sua prática antes de salvar.');writingProgress[d.finishWriting]=true;store.set('writingProgress',writingProgress);const arr=store.get('writingEntries',[]);arr.unshift({id:Date.now(),type:d.finishWriting,text:val,date:new Date().toISOString()});store.set('writingEntries',arr);closeModal();toast('Prática salva.');return render();}
   if (d.authTab) return openAuth(d.authTab);
   if ("authSubmit" in d) return submitAuth();
+  if ("authForgot" in d) return resetPassword();
   if ("authClose" in d) return closeAuth();
   if (d.action) return action(d.action);
 });
-function action(a) {
+async function action(a) {
   if (a === "change-course") { closeModal(); const el = document.createElement("div"); el.id = "coursePicker"; el.className = "course-picker"; document.body.appendChild(el); return showCoursePicker(false); }
   if (a === "login") return openAuth("entrar");
-  if (a === "logout") { user = null; store.set("user", null); closeModal(); paintProfile(); if (view === "nuvem") render(); return toast("Você saiu da conta."); }
+  if (a === "logout") { closeModal(); if (!supabaseClient) return toast("Não foi possível conectar ao serviço de login."); const { error } = await supabaseClient.auth.signOut(); if (error) return toast(friendlyAuthError(error)); user = null; paintProfile(); render(); return toast("Você saiu da conta."); }
   if (a === "tour") { closeModal(); return startTour(); }
   if (a === "career-guide") return info("Como funciona", "A 1ª fase é comum a todos. Na 2ª fase, o 1º dia reúne Português e Redação e o 2º dia traz as disciplinas específicas da carreira escolhida.");
   if (a === "new-theme") return info("Novo tema", "O sorteio de temas de FUVESTs anteriores entra junto com o conteúdo.");
@@ -554,5 +620,6 @@ function runSplash(done) {
   $("#sidebarClose").onclick = () => { sb.classList.remove("open"); $("#mobileOverlay").classList.remove("show"); };
   document.addEventListener("keydown", e => { if (e.key === "Escape" && sb.classList.contains("open") && !tourClose) $("#sidebarClose").click(); }); }
 applyTheme(activeCareer); paintProfile(); paintCloud(); render();
-runSplash(() => showCoursePicker(true));
+runSplash(() => { if (user) render(); });
+initializeAuth().catch(error => console.error("Erro ao inicializar autenticação:", error));
 })();
