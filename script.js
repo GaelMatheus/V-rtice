@@ -138,6 +138,19 @@ async function saveCloudProgress() {
       const cloud = normalizeCloudData(row?.data);
       const localValues = readLocalSnapshot(), localRevisions = metaRead("revisions", {});
       const merged = mergeProgress(localValues, localRevisions, cloud.values, cloud.revisions);
+      const localWasUpdated = stableStringify(merged.values) !== stableStringify(localValues)
+        || stableStringify(merged.revisions) !== stableStringify(localRevisions);
+
+      // A sincronização também precisa BAIXAR alterações feitas em outro aparelho.
+      // Antes, o código só mesclava e enviava à nuvem; o segundo dispositivo nunca
+      // aplicava os dados remotos à sua cópia local enquanto permanecia aberto.
+      if (localWasUpdated) {
+        writeLocalSnapshot(merged.values);
+        metaWrite("revisions", merged.revisions);
+        hydrateAppStateFromStore();
+        render();
+      }
+
       const payload = { schema: 2, values: merged.values, revisions: merged.revisions };
       const current = { schema: 2, values: cloud.values, revisions: cloud.revisions };
       if (stableStringify(payload) !== stableStringify(current)) {
@@ -146,9 +159,7 @@ async function saveCloudProgress() {
         }, { onConflict: "user_id" });
         if (error) throw error;
       }
-      // Não recarrega a página nem troca variáveis em uso no meio de uma sessão.
-      // Se a nuvem venceu um conflito, preservamos a revisão local antiga; a próxima
-      // edição local receberá uma revisão acima da maior revisão já vista na nuvem.
+      // Mantém o cache offline alinhado com a versão mesclada mais recente.
       advanceRevisionFloor(merged.revisions);
       saveAccountOfflineCache(ownerId);
     } while (cloudSyncAgain);
@@ -637,7 +648,13 @@ async function initializeAuth() {
   window.addEventListener("focus", () => { if (user?.id && navigator.onLine && cloudSyncReady) saveCloudProgress(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") { saveAccountOfflineCache(user?.id); saveCloudProgress(); }
+    else if (user?.id && navigator.onLine && cloudSyncReady) saveCloudProgress();
   });
+  // Busca alterações de outros dispositivos sem exigir fechar/reabrir o aplicativo.
+  // O intervalo é pausado automaticamente quando a aba/app fica em segundo plano.
+  window.setInterval(() => {
+    if (document.visibilityState === "visible" && user?.id && navigator.onLine && cloudSyncReady) saveCloudProgress();
+  }, 12000);
   window.addEventListener("pagehide", () => { saveAccountOfflineCache(user?.id); saveCloudProgress(); });
 }
 async function resetPassword() {
