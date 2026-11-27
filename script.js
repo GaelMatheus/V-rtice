@@ -77,6 +77,16 @@ function scheduleCloudSave() {
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => saveCloudProgress(), 700);
 }
+// Compara objetos sem depender da ordem em que as chaves foram gravadas.
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+function sameData(a, b) { return stableStringify(a) === stableStringify(b); }
+
 function normalizeCloudData(data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return { values: {}, revisions: {} };
   const values = data.values && typeof data.values === "object" && !Array.isArray(data.values) ? data.values : data;
@@ -121,10 +131,10 @@ async function saveCloudProgress() {
       const localValues = readLocalSnapshot();
       const localRevisions = metaRead("revisions", {});
       const merged = mergeProgress(localValues, localRevisions, cloud.values, cloud.revisions);
-      const localChanged = JSON.stringify(localValues) !== JSON.stringify(merged.values);
+      const localChanged = !sameData(localValues, merged.values);
       const payload = { schema: 2, values: merged.values, revisions: merged.revisions };
       const cloudPayload = { schema: 2, values: cloud.values, revisions: cloud.revisions };
-      if (JSON.stringify(payload) !== JSON.stringify(cloudPayload)) {
+      if (!sameData(payload, cloudPayload)) {
         const { error } = await supabaseClient.from("user_data").upsert({
           user_id: ownerId, data: payload, updated_at: new Date().toISOString()
         }, { onConflict: "user_id" });
@@ -597,7 +607,7 @@ async function applyAuthenticatedUser(authUser, session) {
     localRevisions = cache?.revisions || {};
   }
   const merged = mergeProgress(localValues, localRevisions, cloud.values, cloud.revisions);
-  const changedOnDevice = JSON.stringify(readLocalSnapshot()) !== JSON.stringify(merged.values);
+  const changedOnDevice = !sameData(readLocalSnapshot(), merged.values);
   writeLocalSnapshot(merged.values);
   metaWrite("revisions", merged.revisions);
   metaWrite("owner", authUser.id);
@@ -607,7 +617,7 @@ async function applyAuthenticatedUser(authUser, session) {
 
   const mergedPayload = { schema: 2, values: merged.values, revisions: merged.revisions };
   const currentCloudPayload = { schema: 2, values: cloud.values, revisions: cloud.revisions };
-  if (JSON.stringify(mergedPayload) !== JSON.stringify(currentCloudPayload)) {
+  if (!sameData(mergedPayload, currentCloudPayload)) {
     const { error: uploadError } = await supabaseClient.from("user_data").upsert({
       user_id: authUser.id, data: mergedPayload, updated_at: new Date().toISOString()
     }, { onConflict: "user_id" });
