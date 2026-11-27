@@ -7,11 +7,155 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const safe = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pad = n => String(n).padStart(2, "0");
 const page = $("#pageContent"), modal = $("#modalBackdrop"), modalContent = $("#modalContent");
-emailRedirectTo: "https://gaelmatheus.github.io/V-rtice/"
-/* ---------- armazenamento local (provisório, até o Supabase) ---------- */
+
+/* ---------- armazenamento local + nuvem por conta (com fila offline) ---------- */
+const STORE_PREFIX = "vertice08:";
+const META_PREFIX = STORE_PREFIX + "__meta:";
+let cloudSyncReady = false;
+let cloudSyncUserId = null;
+let cloudSyncTimer = null;
+let cloudSyncBusy = false;
+let cloudSyncAgain = false;
+let cloudHydrationBusy = false;
+let cloudReloadPending = false;
+
+function metaRead(name, fallback) {
+  try { const raw = localStorage.getItem(META_PREFIX + name); return raw == null ? fallback : JSON.parse(raw); }
+  catch (e) { return fallback; }
+}
+function metaWrite(name, value) {
+  try { localStorage.setItem(META_PREFIX + name, JSON.stringify(value)); } catch (e) {}
+}
+function readLocalSnapshot() {
+  const values = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(STORE_PREFIX) || key.startsWith(META_PREFIX)) continue;
+    try { values[key.slice(STORE_PREFIX.length)] = JSON.parse(localStorage.getItem(key)); } catch (e) {}
+  }
+  return values;
+}
+function writeLocalSnapshot(values) {
+  cloudHydrationBusy = true;
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(STORE_PREFIX) && !key.startsWith(META_PREFIX)) localStorage.removeItem(key);
+    }
+    Object.entries(values || {}).forEach(([key, value]) => {
+      localStorage.setItem(STORE_PREFIX + key, JSON.stringify(value));
+    });
+  } finally { cloudHydrationBusy = false; }
+}
+function accountCacheKey(id) { return "offline:" + id; }
+function saveAccountOfflineCache(id) {
+  if (!id || cloudHydrationBusy) return;
+  metaWrite(accountCacheKey(id), {
+    values: readLocalSnapshot(),
+    revisions: metaRead("revisions", {})
+  });
+}
+function loadAccountOfflineCache(id) {
+  return id ? metaRead(accountCacheKey(id), null) : null;
+}
+function nextRevision() {
+  const previous = Number(metaRead("lastRevision", 0)) || 0;
+  const next = Math.max(Date.now(), previous + 1);
+  metaWrite("lastRevision", next);
+  return next;
+}
+function markLocalChange(key) {
+  if (!user?.id || cloudHydrationBusy) return;
+  const revisions = metaRead("revisions", {});
+  revisions[key] = nextRevision();
+  metaWrite("revisions", revisions);
+  saveAccountOfflineCache(user.id);
+  scheduleCloudSave();
+}
+function scheduleCloudSave() {
+  if (!user?.id || !cloudSyncReady || cloudSyncUserId !== user.id || !navigator.onLine) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => saveCloudProgress(), 700);
+}
+function normalizeCloudData(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return { values: {}, revisions: {} };
+  const values = data.values && typeof data.values === "object" && !Array.isArray(data.values) ? data.values : data;
+  const revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
+  const cleanValues = { ...values };
+  delete cleanValues.schema;
+  delete cleanValues.values;
+  delete cleanValues.revisions;
+  return { values: cleanValues, revisions: { ...revisions } };
+}
+function mergeProgress(localValues, localRevisions, cloudValues, cloudRevisions) {
+  const values = { ...(cloudValues || {}) };
+  const revisions = { ...(cloudRevisions || {}) };
+  const keys = new Set([...Object.keys(localValues || {}), ...Object.keys(cloudValues || {})]);
+  keys.forEach(key => {
+    const localHas = Object.prototype.hasOwnProperty.call(localValues || {}, key);
+    const cloudHas = Object.prototype.hasOwnProperty.call(cloudValues || {}, key);
+    const lr = Number(localRevisions?.[key] || 0);
+    const cr = Number(cloudRevisions?.[key] || 0);
+    if (localHas && (!cloudHas || lr > cr)) {
+      values[key] = localValues[key];
+      revisions[key] = lr || 0;
+    } else if (cloudHas) {
+      values[key] = cloudValues[key];
+      revisions[key] = cr;
+    }
+  });
+  return { values, revisions };
+}
+async function saveCloudProgress() {
+  if (!user?.id || !cloudSyncReady || cloudSyncUserId !== user.id || !supabaseClient || !navigator.onLine) return;
+  if (cloudSyncBusy) { cloudSyncAgain = true; return; }
+  cloudSyncBusy = true;
+  try {
+    do {
+      cloudSyncAgain = false;
+      const ownerId = user?.id;
+      if (!ownerId || ownerId !== cloudSyncUserId) break;
+      const { data: row, error: readError } = await supabaseClient.from("user_data").select("data").eq("user_id", ownerId).maybeSingle();
+      if (readError) throw readError;
+      const cloud = normalizeCloudData(row?.data);
+      const localValues = readLocalSnapshot();
+      const localRevisions = metaRead("revisions", {});
+      const merged = mergeProgress(localValues, localRevisions, cloud.values, cloud.revisions);
+      const localChanged = JSON.stringify(localValues) !== JSON.stringify(merged.values);
+      const payload = { schema: 2, values: merged.values, revisions: merged.revisions };
+      const cloudPayload = { schema: 2, values: cloud.values, revisions: cloud.revisions };
+      if (JSON.stringify(payload) !== JSON.stringify(cloudPayload)) {
+        const { error } = await supabaseClient.from("user_data").upsert({
+          user_id: ownerId, data: payload, updated_at: new Date().toISOString()
+        }, { onConflict: "user_id" });
+        if (error) throw error;
+      }
+      if (localChanged) {
+        writeLocalSnapshot(merged.values);
+        metaWrite("revisions", merged.revisions);
+        saveAccountOfflineCache(ownerId);
+        if (!cloudReloadPending) {
+          cloudReloadPending = true;
+          setTimeout(() => location.reload(), 100);
+          return;
+        }
+      } else {
+        metaWrite("revisions", merged.revisions);
+        saveAccountOfflineCache(ownerId);
+      }
+    } while (cloudSyncAgain);
+  } catch (error) {
+    console.warn("Falha ao sincronizar o progresso. As alterações continuam na fila local e serão reenviadas quando a conexão voltar.", error);
+  } finally {
+    cloudSyncBusy = false;
+  }
+}
 const store = {
-  get(k, d) { try { const v = localStorage.getItem("vertice08:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem("vertice08:" + k, JSON.stringify(v)); } catch (e) {} }
+  get(k, d) { try { const v = localStorage.getItem(STORE_PREFIX + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) {
+    try { localStorage.setItem(STORE_PREFIX + k, JSON.stringify(v)); } catch (e) {}
+    markLocalChange(k);
+  }
 };
 let user = null; // preenchido pela sessão autenticada do Supabase
 const SUPABASE_URL = "https://mcyqimtjutqkeoevejdl.supabase.co";
@@ -361,7 +505,7 @@ function openAuth(tab) {
   ${login ? `<button type="button" class="auth-forgot" data-auth-forgot>Esqueci minha senha</button>` : `<label class="auth-field"><span>Senha novamente</span><input id="authPass2" type="password" autocomplete="new-password" placeholder="Repita sua senha"></label>`}
   <div class="auth-error" id="authError" role="alert"></div>
   <button class="auth-submit" data-auth-submit>${login ? "Entrar na minha conta" : "Criar minha conta"} <span>→</span></button>
-  <div class="auth-note"><span>✦</span><p>Seu acesso é protegido por sua conta.<br><b>O progresso será sincronizado com a nuvem nas próximas etapas.</b></p></div>
+  <div class="auth-note"><span>✦</span><p>Seu acesso é protegido por sua conta.<br><b>Seu progresso fica vinculado à sua conta e sincroniza entre dispositivos.</b></p></div>
   <small class="auth-legal">Ao continuar, você concorda em usar o Vértice de forma responsável.</small></div>`;
   setTimeout(() => $(login ? "#authEmail" : "#authName")?.focus(), 30);
 }
@@ -399,20 +543,90 @@ async function submitAuth() {
   }
 }
 async function applyAuthenticatedUser(authUser, session) {
-  if (!authUser) return;
+  if (!authUser || !supabaseClient) return;
+  if (cloudSyncReady && cloudSyncUserId === authUser.id) return;
   let profile = null;
-  const { data } = await supabaseClient.from("profiles").select("id,name,email,career_id,career_name").eq("id", authUser.id).maybeSingle();
-  profile = data;
+  const { data: profileData, error: profileError } = await supabaseClient.from("profiles").select("id,name,email,career_id,career_name").eq("id", authUser.id).maybeSingle();
+  if (profileError) console.warn("Não foi possível carregar o perfil:", profileError);
+  profile = profileData;
   user = { id: authUser.id, name: profile?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "Estudante", email: authUser.email || "" };
+
+  // Se a conexão estiver indisponível, mantém uma cópia local isolada por ID.
+  // A sincronização fica bloqueada até conseguirmos ler o estado atual da nuvem.
+  let localOwner = metaRead("owner", null);
+  if (localOwner && localOwner !== authUser.id) {
+    const accountCache = loadAccountOfflineCache(authUser.id);
+    writeLocalSnapshot(accountCache?.values || {});
+    metaWrite("revisions", accountCache?.revisions || {});
+    metaWrite("owner", authUser.id);
+    localOwner = authUser.id;
+  }
+  const { data: cloudRow, error: cloudError } = await supabaseClient.from("user_data").select("data").eq("user_id", authUser.id).maybeSingle();
+  if (cloudError) {
+    console.warn("A nuvem está indisponível; o Vértice continuará salvando localmente até a conexão voltar.", cloudError);
+    if (!metaRead("owner", null)) {
+      const offlineValues = readLocalSnapshot();
+      const offlineRevisions = metaRead("revisions", {});
+      Object.keys(offlineValues).forEach(key => { if (!offlineRevisions[key]) offlineRevisions[key] = nextRevision(); });
+      metaWrite("revisions", offlineRevisions);
+      metaWrite("owner", authUser.id);
+    }
+    cloudSyncReady = false;
+    cloudSyncUserId = authUser.id;
+    saveAccountOfflineCache(authUser.id);
+    paintProfile(); paintCloud(); render();
+    return;
+  }
+
+  const cloud = normalizeCloudData(cloudRow?.data);
+  let localValues = readLocalSnapshot();
+  let localRevisions = metaRead("revisions", {});
+  const cloudHasData = Object.keys(cloud.values).length > 0;
+  const localHasData = Object.keys(localValues).length > 0;
+  const ownerMatches = metaRead("owner", null) === authUser.id;
+
+  // Primeiro acesso: migra o progresso antigo deste aparelho para o ID.
+  // Se a conta já possui dados, a nuvem vence conflitos; a cópia offline
+  // vinculada ao mesmo ID pode complementar/atualizar os dados por revisão.
+  if (!cloudHasData && localHasData && (!localOwner || ownerMatches)) {
+    Object.keys(localValues).forEach(key => { if (!localRevisions[key]) localRevisions[key] = nextRevision(); });
+  }
+  if (!ownerMatches && cloudHasData) {
+    const cache = loadAccountOfflineCache(authUser.id);
+    localValues = cache?.values || {};
+    localRevisions = cache?.revisions || {};
+  }
+  const merged = mergeProgress(localValues, localRevisions, cloud.values, cloud.revisions);
+  const changedOnDevice = JSON.stringify(readLocalSnapshot()) !== JSON.stringify(merged.values);
+  writeLocalSnapshot(merged.values);
+  metaWrite("revisions", merged.revisions);
+  metaWrite("owner", authUser.id);
+  cloudSyncUserId = authUser.id;
+  cloudSyncReady = true;
+  saveAccountOfflineCache(authUser.id);
+
+  const mergedPayload = { schema: 2, values: merged.values, revisions: merged.revisions };
+  const currentCloudPayload = { schema: 2, values: cloud.values, revisions: cloud.revisions };
+  if (JSON.stringify(mergedPayload) !== JSON.stringify(currentCloudPayload)) {
+    const { error: uploadError } = await supabaseClient.from("user_data").upsert({
+      user_id: authUser.id, data: mergedPayload, updated_at: new Date().toISOString()
+    }, { onConflict: "user_id" });
+    if (uploadError) console.warn("A cópia offline será enviada quando a conexão voltar:", uploadError);
+  }
+  if (changedOnDevice) {
+    location.reload();
+    return;
+  }
+
   if (profile?.career_id) {
     const career = D.careers.find(c => c.id === profile.career_id);
     if (career) { activeCareer = career; store.set("careerId", career.id); applyTheme(career); }
   } else if (activeCareer?.id) {
-    // Migra para o perfil a carreira que já estava selecionada neste dispositivo.
     const { error } = await supabaseClient.from("profiles").update({ career_id: activeCareer.id, career_name: activeCareer.name }).eq("id", authUser.id);
     if (error) console.warn("Não foi possível salvar a carreira inicial no perfil:", error);
   }
   paintProfile(); paintCloud(); render();
+  scheduleCloudSave();
 }
 async function initializeAuth() {
   if (!supabaseClient) { console.error("Supabase SDK indisponível."); return; }
@@ -420,8 +634,22 @@ async function initializeAuth() {
   if (session?.user) await applyAuthenticatedUser(session.user, session);
   supabaseClient.auth.onAuthStateChange((event, session) => {
     if (session?.user) setTimeout(() => applyAuthenticatedUser(session.user, session), 0);
-    else if (event === "SIGNED_OUT") { user = null; paintProfile(); render(); }
+    else if (event === "SIGNED_OUT") {
+      clearTimeout(cloudSyncTimer);
+      cloudSyncReady = false; cloudSyncUserId = null; user = null;
+      paintProfile(); render();
+    }
   });
+  window.addEventListener("online", () => {
+    if (!user?.id) return;
+    if (cloudSyncReady && cloudSyncUserId === user.id) saveCloudProgress();
+    else applyAuthenticatedUser({ id: user.id, email: user.email, user_metadata: { name: user.name } }).catch(console.error);
+  });
+  window.addEventListener("focus", () => { if (user?.id && navigator.onLine) saveCloudProgress(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") saveCloudProgress();
+  });
+  window.addEventListener("pagehide", () => { saveAccountOfflineCache(user?.id); saveCloudProgress(); });
 }
 async function resetPassword() {
   const email = ($("#authEmail")?.value || "").trim();
@@ -586,7 +814,7 @@ document.addEventListener("click", async e => {
 async function action(a) {
   if (a === "change-course") { closeModal(); const el = document.createElement("div"); el.id = "coursePicker"; el.className = "course-picker"; document.body.appendChild(el); return showCoursePicker(false); }
   if (a === "login") return openAuth("entrar");
-  if (a === "logout") { closeModal(); if (!supabaseClient) return toast("Não foi possível conectar ao serviço de login."); const { error } = await supabaseClient.auth.signOut(); if (error) return toast(friendlyAuthError(error)); user = null; paintProfile(); render(); return toast("Você saiu da conta."); }
+  if (a === "logout") { closeModal(); await saveCloudProgress(); saveAccountOfflineCache(user?.id); if (!supabaseClient) return toast("Não foi possível conectar ao serviço de login."); const { error } = await supabaseClient.auth.signOut(); if (error) return toast(friendlyAuthError(error)); user = null; paintProfile(); render(); return toast("Você saiu da conta."); }
   if (a === "tour") { closeModal(); return startTour(); }
   if (a === "career-guide") return info("Como funciona", "A 1ª fase é comum a todos. Na 2ª fase, o 1º dia reúne Português e Redação e o 2º dia traz as disciplinas específicas da carreira escolhida.");
   if (a === "new-theme") return info("Novo tema", "O sorteio de temas de FUVESTs anteriores entra junto com o conteúdo.");
